@@ -1,3 +1,9 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+# In[2]:
+
+
 # --------------------------------------------------------
 # Tensorflow Faster R-CNN
 # Licensed under The MIT License [see LICENSE for details]
@@ -31,7 +37,10 @@ from model.utils.net_utils import vis_detections_filtered_objects_PIL  # (1) her
 xrange = range  # Python 3
 
 
-def parse_args():
+# In[3]:
+
+
+def parse_args(args_list=None):
     """
     Parse input arguments
     """
@@ -93,58 +102,13 @@ def parse_args():
     parser.add_argument('--thresh_obj', default=0.5,
                         type=float,
                         required=False)
-
-    args = parser.parse_args()
+    if args_list is None:
+        args_list = sys.argv[1:]
+    args = parser.parse_args(args_list)
     return args
 
 
-lr = cfg.TRAIN.LEARNING_RATE
-momentum = cfg.TRAIN.MOMENTUM
-weight_decay = cfg.TRAIN.WEIGHT_DECAY
-
-
-def _get_image_blob(im):
-    """Converts an image into a network input.
-    Arguments:
-      im (ndarray): a color image in BGR order
-    Returns:
-      blob (ndarray): a data blob holding an image pyramid
-      im_scale_factors (list): list of image scales (relative to im) used
-        in the image pyramid
-    """
-    im_orig = im.astype(np.float32, copy=True)
-    im_orig -= cfg.PIXEL_MEANS
-
-    im_shape = im_orig.shape
-    im_size_min = np.min(im_shape[0:2])
-    im_size_max = np.max(im_shape[0:2])
-
-    processed_ims = []
-    im_scale_factors = []
-
-    for target_size in cfg.TEST.SCALES:
-        im_scale = float(target_size) / float(im_size_min)
-        # Prevent the biggest axis from being more than MAX_SIZE
-        if np.round(im_scale * im_size_max) > cfg.TEST.MAX_SIZE:
-            im_scale = float(cfg.TEST.MAX_SIZE) / float(im_size_max)
-        im = cv2.resize(im_orig, None, None, fx=im_scale, fy=im_scale,
-                        interpolation=cv2.INTER_LINEAR)
-        im_scale_factors.append(im_scale)
-        processed_ims.append(im)
-
-    # Create a blob to hold the input images
-    blob = im_list_to_blob(processed_ims)
-
-    return blob, np.array(im_scale_factors)
-
-
-if __name__ == '__main__':
-
-    args = parse_args()
-
-    # print('Called with args:')
-    # print(args)
-
+def main(args):
     if args.cfg_file is not None:
         cfg_from_file(args.cfg_file)
     if args.set_cfgs is not None:
@@ -152,13 +116,6 @@ if __name__ == '__main__':
 
     cfg.USE_GPU_NMS = args.cuda
     np.random.seed(cfg.RNG_SEED)
-
-    # load model
-    model_dir = args.load_dir + "/" + args.net + "_handobj_100K" + "/" + args.dataset
-    if not os.path.exists(model_dir):
-        raise Exception('There is no input directory for loading network from ' + model_dir)
-    load_name = os.path.join(model_dir,
-                             'faster_rcnn_{}_{}_{}.pth'.format(args.checksession, args.checkepoch, args.checkpoint))
 
     pascal_classes = np.asarray(['__background__', 'targetobject', 'hand'])
     args.set_cfgs = ['ANCHOR_SCALES', '[8, 16, 32, 64]', 'ANCHOR_RATIOS', '[0.5, 1, 2]']
@@ -175,19 +132,62 @@ if __name__ == '__main__':
     else:
         print("network is not defined")
         pdb.set_trace()
+        raise Exception
 
     fasterRCNN.create_architecture()
+
+    load_name = 'models/res101_handobj_100K/pascal_voc/faster_rcnn_1_8_132028.pth'
 
     print("load checkpoint %s" % (load_name))
     if args.cuda > 0:
         checkpoint = torch.load(load_name)
     else:
         checkpoint = torch.load(load_name, map_location=(lambda storage, loc: storage))
+
     fasterRCNN.load_state_dict(checkpoint['model'])
+
     if 'pooling_mode' in checkpoint.keys():
         cfg.POOLING_MODE = checkpoint['pooling_mode']
 
     print('load model successfully!')
+
+    lr = cfg.TRAIN.LEARNING_RATE
+    momentum = cfg.TRAIN.MOMENTUM
+    weight_decay = cfg.TRAIN.WEIGHT_DECAY
+
+    def _get_image_blob(im):
+        """Converts an image into a network input.
+        Arguments:
+          im (ndarray): a color image in BGR order
+        Returns:
+          blob (ndarray): a data blob holding an image pyramid
+          im_scale_factors (list): list of image scales (relative to im) used
+            in the image pyramid
+        """
+        im_orig = im.astype(np.float32, copy=True)
+        im_orig -= cfg.PIXEL_MEANS
+
+        im_shape = im_orig.shape
+        im_size_min = np.min(im_shape[0:2])
+        im_size_max = np.max(im_shape[0:2])
+
+        processed_ims = []
+        im_scale_factors = []
+
+        for target_size in cfg.TEST.SCALES:
+            im_scale = float(target_size) / float(im_size_min)
+            # Prevent the biggest axis from being more than MAX_SIZE
+            if np.round(im_scale * im_size_max) > cfg.TEST.MAX_SIZE:
+                im_scale = float(cfg.TEST.MAX_SIZE) / float(im_size_max)
+            im = cv2.resize(im_orig, None, None, fx=im_scale, fy=im_scale,
+                            interpolation=cv2.INTER_LINEAR)
+            im_scale_factors.append(im_scale)
+            processed_ims.append(im)
+
+        # Create a blob to hold the input images
+        blob = im_list_to_blob(processed_ims)
+
+        return blob, np.array(im_scale_factors)
 
     # initilize the tensor holder here.
     im_data = torch.FloatTensor(1)
@@ -212,6 +212,7 @@ if __name__ == '__main__':
 
         fasterRCNN.eval()
 
+    with torch.no_grad():
         start = time.time()
         max_per_image = 100
         thresh_hand = args.thresh_hand
@@ -275,11 +276,9 @@ if __name__ == '__main__':
 
                 # pdb.set_trace()
             det_tic = time.time()
-
-            rois, cls_prob, bbox_pred, \
-            rpn_loss_cls, rpn_loss_box, \
-            RCNN_loss_cls, RCNN_loss_bbox, \
-            rois_label, loss_list = fasterRCNN(im_data, im_info, gt_boxes, num_boxes, box_info)
+            print(im_data.shape)
+            rois, cls_prob, bbox_pred, rpn_loss_cls, rpn_loss_box, RCNN_loss_cls, RCNN_loss_bbox, rois_label, \
+                loss_list = fasterRCNN(im_data, im_info, gt_boxes, num_boxes, box_info)
 
             scores = cls_prob.data
             boxes = rois.data[:, :, 1:5]
@@ -308,8 +307,8 @@ if __name__ == '__main__':
                                 cfg.TRAIN.BBOX_NORMALIZE_STDS).cuda() \
                                          + torch.FloatTensor(cfg.TRAIN.BBOX_NORMALIZE_MEANS).cuda()
                         else:
-                            box_deltas = box_deltas.view(-1, 4) * torch.FloatTensor(cfg.TRAIN.BBOX_NORMALIZE_STDS) \
-                                         + torch.FloatTensor(cfg.TRAIN.BBOX_NORMALIZE_MEANS)
+                            box_deltas = box_deltas.view(-1, 4) * torch.FloatTensor(
+                                cfg.TRAIN.BBOX_NORMALIZE_STDS) + torch.FloatTensor(cfg.TRAIN.BBOX_NORMALIZE_MEANS)
 
                         box_deltas = box_deltas.view(1, -1, 4)
                     else:
@@ -318,8 +317,8 @@ if __name__ == '__main__':
                                 cfg.TRAIN.BBOX_NORMALIZE_STDS).cuda() \
                                          + torch.FloatTensor(cfg.TRAIN.BBOX_NORMALIZE_MEANS).cuda()
                         else:
-                            box_deltas = box_deltas.view(-1, 4) * torch.FloatTensor(cfg.TRAIN.BBOX_NORMALIZE_STDS) \
-                                         + torch.FloatTensor(cfg.TRAIN.BBOX_NORMALIZE_MEANS)
+                            box_deltas = box_deltas.view(-1, 4) * torch.FloatTensor(
+                                cfg.TRAIN.BBOX_NORMALIZE_STDS) + torch.FloatTensor(cfg.TRAIN.BBOX_NORMALIZE_MEANS)
                         box_deltas = box_deltas.view(1, -1, 4 * len(pascal_classes))
 
                 pred_boxes = bbox_transform_inv(boxes, box_deltas, 1)
@@ -335,15 +334,16 @@ if __name__ == '__main__':
             det_toc = time.time()
             detect_time = det_toc - det_tic
             misc_tic = time.time()
+            print(detect_time)
             if vis:
                 im2show = np.copy(im)
             obj_dets, hand_dets = None, None
             for j in xrange(1, len(pascal_classes)):
                 # inds = torch.nonzero(scores[:,j] > thresh).view(-1)
                 if pascal_classes[j] == 'hand':
-                    inds = torch.nonzero(scores[:, j] > thresh_hand).view(-1)
+                    inds = torch.nonzero(scores[:, j] > thresh_hand, as_tuple=False).view(-1)
                 elif pascal_classes[j] == 'targetobject':
-                    inds = torch.nonzero(scores[:, j] > thresh_obj).view(-1)
+                    inds = torch.nonzero(scores[:, j] > thresh_obj, as_tuple=False).view(-1)
 
                 # if there is det
                 if inds.numel() > 0:
@@ -372,8 +372,9 @@ if __name__ == '__main__':
             nms_time = misc_toc - misc_tic
 
             if webcam_num == -1:
-                sys.stdout.write('im_detect: {:d}/{:d} {:.3f}s {:.3f}s   \r' \
-                                 .format(num_images + 1, len(imglist), detect_time, nms_time))
+                sys.stdout.write(
+                    'im_detect: {:d}/{:d} {:.3f}s {:.3f}s   \r'.format(num_images + 1, len(imglist), detect_time,
+                                                                       nms_time))
                 sys.stdout.flush()
 
             if vis and webcam_num == -1:
@@ -395,3 +396,8 @@ if __name__ == '__main__':
         if webcam_num >= 0:
             cap.release()
             cv2.destroyAllWindows()
+
+
+if __name__ == '__main__':
+    args_ = parse_args(args_list=['--checkpoint', '0'])
+    main(args_)
