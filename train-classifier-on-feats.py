@@ -6,37 +6,62 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 import torch.nn as nn
 
-#%%
-
+TRAIN_TXT = os.path.expanduser('~/data/datasets/EPIC_KITCHENS_2018/train.txt')
+VAL_TXT = os.path.expanduser('~/data/datasets/EPIC_KITCHENS_2018/val.txt')
 LABELS_DIR = os.path.expanduser('~/data/datasets/EPIC_KITCHENS_2018/custom_labels_30')
 FRAMES_DIR = os.path.expanduser('~/data/datasets/EPIC_KITCHENS_2018/frames_30')
 FEATS_DIR = os.path.expanduser('./feats')
 FEATS_EXT = '_base.pt'
 
-video_name = 'P06_02'
-f_csv_labels = os.path.join(LABELS_DIR, video_name + '.csv')
-
-df_labels = pd.read_csv(f_csv_labels)
-df_labels = df_labels.set_index('path', drop=False)
-df_labels.columns
-#%%
-
-all_frame_names = df_labels.path.apply(lambda x: os.path.splitext(os.path.basename(x))[0])
-feat_files = all_frame_names.apply(lambda x: os.path.join(FEATS_DIR, x + FEATS_EXT))
-feat_files_exist = feat_files.apply(os.path.exists)
-df_feats = pd.DataFrame({'frame_name': all_frame_names, 'frame_path': df_labels.path, 'feat_file': feat_files,
-                         'feats_exist': feat_files_exist})
-df_feats = df_feats.set_index('frame_path')
-
-print(df_feats.feats_exist.sum(), '/', len(df_feats.feats_exist), 'feature files exist.')
 
 #%%
-df_label_feats = pd.concat([df_feats, df_labels], axis=1)
-assert len(df_label_feats) == len(df_feats) == len(df_labels)
+def get_feats_and_labels(video_name):
+    f_csv_labels = os.path.join(LABELS_DIR, video_name + '.csv')
+
+    df_labels = pd.read_csv(f_csv_labels)
+    df_labels = df_labels.set_index('path', drop=False)
+
+    all_frame_names = df_labels.path.apply(lambda x: os.path.splitext(os.path.basename(x))[0])
+    feat_files = all_frame_names.apply(lambda x: os.path.join(FEATS_DIR, x + FEATS_EXT))
+    feat_files_exist = feat_files.apply(os.path.exists)
+    df_feats = pd.DataFrame({'frame_name': all_frame_names, 'frame_path': df_labels.path, 'feat_file': feat_files,
+                             'feats_exist': feat_files_exist})
+    df_feats = df_feats.set_index('frame_path')
+    print(df_feats.feats_exist.sum(), '/', len(df_feats.feats_exist), 'feature files exist.')
+    if df_feats.feats_exist.sum() == 0:
+        print('features exist in ', FEATS_DIR, '?')
+
+    df_label_feats = pd.concat([df_feats, df_labels], axis=1)
+    assert len(df_label_feats) == len(df_feats) == len(df_labels)
+
+    return df_label_feats
+
+#%%
+with open(TRAIN_TXT, 'r') as f:
+    train_videopaths = [s.strip() for s in f.readlines()]
+
+with open(VAL_TXT, 'r') as f:
+    val_videopaths = [s.strip() for s in f.readlines()]
 
 #%%
 
+train_videonames = [os.path.splitext(os.path.basename(pth))[0] for pth in train_videopaths]
+val_videonames = [os.path.splitext(os.path.basename(pth))[0] for pth in val_videopaths]
 
+#%%
+val_df_label_feats_list = []
+for videoname in val_videonames:
+    print(videoname)
+    val_df_label_feats_list.append(get_feats_and_labels(videoname))
+
+
+#%%
+train_df_label_feats_list = []
+for videoname in train_videonames:
+    print(videoname)
+    train_df_label_feats_list.append(get_feats_and_labels(videoname))
+
+#%%
 class FeatsDataset(Dataset):
     def __init__(self, df_feats_labels, feats_in_batch_form=True, transform=None):
         """
@@ -69,14 +94,17 @@ class FeatsDataset(Dataset):
 
         return sample
 #%%
-dataset = FeatsDataset(df_label_feats)
+df_label_feats_train = pd.concat(train_df_label_feats_list, axis=0, ignore_index=True)
+df_label_feats_val = pd.concat(val_df_label_feats_list, axis=0, ignore_index=True)
+train_dataset = FeatsDataset(df_label_feats_train)
+val_dataset = FeatsDataset(df_label_feats_val)
 
 #%%
 # Make dataset/dataloader
 train_batch_size = 16
 val_batch_size = 1
-train_dataloader = DataLoader(dataset, batch_size=train_batch_size, shuffle=True)
-val_dataloader = DataLoader(dataset, batch_size=val_batch_size, shuffle=False)
+train_dataloader = DataLoader(train_dataset, batch_size=train_batch_size, shuffle=True)
+val_dataloader = DataLoader(val_dataset, batch_size=val_batch_size, shuffle=False)
 
 #%%
 # Train model
