@@ -280,17 +280,16 @@ def main(args):
 
                 # pdb.set_trace()
             det_tic = time.time()
-            print(im_data.shape)
             base_feats = fasterRCNN.forward_base_features(im_data, im_info, gt_boxes, num_boxes, box_info)
-            pooled_feats, pooled_feats_padded = fasterRCNN.forward_pooled_feats(im_data, im_info, gt_boxes, num_boxes, box_info)
+            #pooled_feats, pooled_feats_padded = fasterRCNN.forward_pooled_feats(im_data, im_info, gt_boxes, num_boxes, box_info)
             torch.save(base_feats, feats_file_base + '_base.pt')
-            torch.save(pooled_feats, feats_file_base + '_pooled.pt')
-            torch.save(pooled_feats_padded, feats_file_base + '_pooled_padded.pt')
+            #torch.save(pooled_feats, feats_file_base + '_pooled.pt')
+            #torch.save(pooled_feats_padded, feats_file_base + '_pooled_padded.pt')
             det_toc = time.time()
             detect_time = det_toc - det_tic
-            print(detect_time)
+            print('Inference time: ', detect_time, 's | ', feats_file_base)
 
 
 if __name__ == '__main__':
-    args_ = parse_args(args_list=['--checkpoint', '0'])
+    args_ = parse_args(args_list=['--checkpoint', '0'] + sys.argv[1:])
     main(args_)

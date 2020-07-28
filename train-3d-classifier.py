@@ -16,7 +16,7 @@ import yaml.representer
 from tensorboardX import SummaryWriter
 
 
-def get_feats_and_labels(video_name, labels_dir, feats_dir, feats_ext):
+def get_framepaths_and_labels(video_name, labels_dir, feats_dir, feats_ext):
     f_csv_labels = os.path.join(labels_dir, video_name + '.csv')
     assert os.path.exists(f_csv_labels)
 
@@ -31,7 +31,7 @@ def get_feats_and_labels(video_name, labels_dir, feats_dir, feats_ext):
     df_feats = df_feats.set_index('frame_path')
     print(df_feats.feats_exist.sum(), '/', len(df_feats.feats_exist), 'feature files exist.')
     if df_feats.feats_exist.sum() == 0:
-        print('features exist in ', feats_dir, '?')
+        print('Do frames exist in ', feats_dir, '?')
 
     df_label_feats = pd.concat([df_feats, df_labels], axis=1)
     assert len(df_label_feats) == len(df_feats) == len(df_labels)
@@ -39,8 +39,8 @@ def get_feats_and_labels(video_name, labels_dir, feats_dir, feats_ext):
     return df_label_feats
 
 
-class FeatsDataset(Dataset):
-    def __init__(self, df_feats_labels, feats_in_batch_form=True, transform=None):
+class ImagesDataset(Dataset):
+    def __init__(self, df_frames_labels, feats_in_batch_form=True, transform=None):
         """
         Args:
             csv_file (string): Path to the csv file with annotations.

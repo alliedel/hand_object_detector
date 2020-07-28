@@ -49,7 +49,7 @@ class FeatsDataset(Dataset):
                 on a sample.
         """
         self.full_df_labels_feats_files = df_feats_labels
-        self.df_labels_feats_files = df_feats_labels[df_feats_labels['feats_exist'] != 0].reset_index()
+        self.df_labels_feats_files = df_feats_labels[df_feats_labels['feats_exist'] != 0]
         self.transform = transform
         self.feats_in_batch_form = feats_in_batch_form
 
@@ -126,7 +126,7 @@ def weight_reset(m):
 
 class Trainer(object):
     def __init__(self, model: nn.Module, dataloader_train: DataLoader, dataloader_val: DataLoader = None, cuda=True,
-                 tensorboard_writer: SummaryWriter=None, start_iteration=0, lr=0.001, momentum=0.2):
+                 tensorboard_writer: SummaryWriter=None, start_iteration=0):
         assert start_iteration == 0
         self.cuda = cuda
         self.model = model
@@ -134,7 +134,7 @@ class Trainer(object):
             self.model.cuda()
         self.dataloader_train = dataloader_train
         self.dataloader_val = dataloader_val
-        self.optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum)
+        self.optimizer = optim.SGD(model.parameters(), lr=0.005, momentum=0.3)
         self.loss_fcn = nn.CrossEntropyLoss()
         if tensorboard_writer is None:
             print(Warning('No tensorboard writer set.'))
@@ -187,17 +187,16 @@ class Trainer(object):
         pred_lbl = torch.argmax(outputs, dim=1)
         return loss, pred_lbl
 
-    def evaluate(self, split='val'):
+    def evaluate(self):
         was_training = False
         if self.model.training:
             was_training = True
             self.model.eval()
         confusion_mat = torch.zeros((2, 2), dtype=torch.int)
-        dataloaders = {'val': self.dataloader_val, 'train': self.dataloader_train}
         with torch.no_grad():
             for epoch in range(1):  # loop over the dataset multiple times
                 running_loss = 0.0
-                for i, data in enumerate(dataloaders[split]):
+                for i, data in enumerate(self.dataloader_train):
                     # get the inputs; data is a list of [inputs, labels]
                     inputs, labels = data
                     loss, pred_lbls = self.val_step(data)
@@ -207,18 +206,18 @@ class Trainer(object):
                     running_loss += loss.item()
             if was_training:
                 self.model.train()
-        self.tensorboard_writer.add_scalar(f'validation_{split}/avg_loss',  running_loss / len(dataloaders[split]),
+        self.tensorboard_writer.add_scalar('validation/avg_loss',  running_loss / len(self.dataloader_train),
                                            global_step=self.iteration)
-        self.tensorboard_writer.add_scalar(f'validation_{split}/TN',  confusion_mat[0, 0].item(),
+        self.tensorboard_writer.add_scalar('validation/TN',  confusion_mat[0, 0].item(),
                                            global_step=self.iteration)
-        self.tensorboard_writer.add_scalar(f'validation_{split}/TP',  confusion_mat[1, 1].item(),
+        self.tensorboard_writer.add_scalar('validation/TP',  confusion_mat[1, 1].item(),
                                            global_step=self.iteration)
-        self.tensorboard_writer.add_scalar(f'validation_{split}/tot_neg',  confusion_mat[0, :].sum(),
+        self.tensorboard_writer.add_scalar('validation/tot_neg',  confusion_mat[0, :].sum(),
                                            global_step=self.iteration)
-        self.tensorboard_writer.add_scalar(f'validation_{split}/tot_pos',  confusion_mat[1, :].sum(),
+        self.tensorboard_writer.add_scalar('validation/tot_pos',  confusion_mat[1, :].sum(),
                                            global_step=self.iteration)
         return {'running_loss': running_loss,
-                'avg_loss': running_loss / len(dataloaders[split]),
+                'avg_loss': running_loss / len(self.dataloader_train),
                 'confusion_mat': confusion_mat}
 
 
@@ -312,13 +311,12 @@ def main(args):
     train_videonames = [os.path.splitext(os.path.basename(pth))[0] for pth in train_videopaths]
     val_videonames = [os.path.splitext(os.path.basename(pth))[0] for pth in val_videopaths]
 
-    # val
     val_df_label_feats_list = []
     for videoname in val_videonames:
+        print(videoname)
         val_df_label_feats_list.append(get_feats_and_labels(videoname, os.path.join(args.dataset_root, args.labels_dir),
                                                             args.feats_dir, args.feats_ext))
 
-    # train
     train_df_label_feats_list = []
     for videoname in train_videonames:
         train_df_label_feats_list.append(
@@ -326,44 +324,33 @@ def main(args):
                                  args.feats_dir, args.feats_ext))
 
     df_label_feats_train = pd.concat(train_df_label_feats_list, axis=0, ignore_index=True)
-    df_label_feats_train = df_label_feats_train[df_label_feats_train.feats_exist == True].reset_index()
     df_label_feats_val = pd.concat(val_df_label_feats_list, axis=0, ignore_index=True)
-    df_label_feats_val = df_label_feats_val[df_label_feats_val.feats_exist == True].reset_index()
-    val_dataset = FeatsDataset(df_label_feats_val)
     train_dataset = FeatsDataset(df_label_feats_train)
+    val_dataset = FeatsDataset(df_label_feats_val)
 
     # Make dataset/dataloader
     train_batch_size = 16
     val_batch_size = 1
-
     train_dataloader = DataLoader(train_dataset, batch_size=train_batch_size, shuffle=True)
     val_dataloader = DataLoader(val_dataset, batch_size=val_batch_size, shuffle=False)
-
-    print('len(train_dataloader)', len(train_dataloader))
-    print('len(val_dataloader)', len(val_dataloader))
 
     # Train model
     if args.cpu:
         device = torch.device('cpu')
     else:
         device = torch.device("cuda")
-
     my_model = CustomSimpleNet(1024, global_pooling_type=args.global_pooling_type)
     my_writer = SummaryWriter(logdir)
-    trainer = Trainer(my_model, dataloader_train=train_dataloader, dataloader_val=val_dataloader,
-                      tensorboard_writer=my_writer, cuda=not args.cpu)
+    trainer = Trainer(my_model, train_dataloader, tensorboard_writer=my_writer, cuda=not args.cpu)
 
     # Confirm we can bring loss to 0 on a single image
-
-    itrlod = iter(val_dataloader)
-    example_sample = [x for x in next(itrlod)]
+    example_sample = [x.to(device) for x in next(iter(val_dataloader))]
 
     trainer.model.apply(weight_reset)
     val_dicts = []
     start = time.time()
-    n_epochs = args.n_epochs
+    n_epochs = 20
     losses_file = 'losses.txt'
-    _ = trainer.evaluate('train')
     val_dict = trainer.evaluate()
     val_dicts.append(val_dict)
     with open(losses_file, 'w') as f:
@@ -372,8 +359,6 @@ def main(args):
 
     save_every = 1 if n_epochs < 20 else int(20 * n_epochs)
     for ep in range(n_epochs):
-        # train_val_dict = trainer.evaluate('train')
-        _ = trainer.evaluate('train')
         val_dict = trainer.evaluate()
         val_dicts.append(val_dict)
         with open(losses_file, 'a+') as f:
